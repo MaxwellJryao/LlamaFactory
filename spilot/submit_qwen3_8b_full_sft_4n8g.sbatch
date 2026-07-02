@@ -1,10 +1,16 @@
 #!/usr/bin/env bash
 # Submit with:
-#   /cm/shared/apps/slurm/current/bin/sbatch submit_qwen3_5_9b_full_sft_4n8g.sbatch
+#   /cm/shared/apps/slurm/current/bin/sbatch submit_qwen3_8b_full_sft_4n8g.sbatch
 # Environment overrides such as OUTPUT_DIR, CUTOFF_LEN, and REPORT_TO are
 # inherited by the four node launchers.
+#
+# The training step runs inside the CUDA 13.3 image (same one the slime GRPO
+# pipeline trains with): the host driver only supports CUDA 12.x while the
+# llamafactory venv ships torch +cu130, and the image's cuda-compat layer
+# bridges that gap. Mounting /lustre/fsw keeps the venv, repo, dataset cache,
+# and checkpoints at identical paths inside the container.
 
-#SBATCH --job-name=qwen35-9b-sft
+#SBATCH --job-name=qwen3-8b-sft
 #SBATCH --account=nvr_lpr_llm
 #SBATCH --partition=backfill,batch
 #SBATCH --constraint=H100
@@ -21,10 +27,16 @@
 
 set -Eeuo pipefail
 
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
-RUNNER="${SCRIPT_DIR}/run_qwen3_5_9b_full_sft_4n8g.sh"
+# sbatch executes a copy of this script from the Slurm spool directory, so the
+# repo location cannot be derived from BASH_SOURCE; it must be hardcoded.
+SPILOT_ROOT="/lustre/fsw/portfolios/nvr/projects/nvr_lpr_llm/users/jiaruiy/spilot"
+REPO_ROOT="${SPILOT_ROOT}/src/LlamaFactory"
+SCRIPT_DIR="${REPO_ROOT}/spilot"
+RUNNER="${SCRIPT_DIR}/run_qwen3_8b_full_sft_4n8g.sh"
 SRUN_BIN="/cm/shared/apps/slurm/current/bin/srun"
 SCONTROL_BIN="/cm/shared/apps/slurm/current/bin/scontrol"
+TRAIN_SQSH="${TRAIN_SQSH:-${SPILOT_ROOT}/data/container/flappydora-ubuntu22.04-cuda13.3.sqsh}"
+TRAIN_MOUNTS="${TRAIN_CONTAINER_MOUNTS:-/lustre/fsw:/lustre/fsw}"
 
 for required_file in "${RUNNER}" "${SRUN_BIN}" "${SCONTROL_BIN}"; do
     if [[ ! -x "${required_file}" ]]; then
@@ -32,6 +44,10 @@ for required_file in "${RUNNER}" "${SRUN_BIN}" "${SCONTROL_BIN}"; do
         exit 2
     fi
 done
+if [[ ! -f "${TRAIN_SQSH}" ]]; then
+    printf 'error: training container image does not exist: %s\n' "${TRAIN_SQSH}" >&2
+    exit 2
+fi
 
 MASTER_ADDR="${MASTER_ADDR:-$("${SCONTROL_BIN}" show hostnames "${SLURM_JOB_NODELIST}" | head -n1)}"
 if [[ -z "${MASTER_ADDR}" ]]; then
@@ -46,6 +62,9 @@ unset NODE_RANK
 
 # Keep CPU headroom for the batch shell. GPU and memory TRES are inherited from
 # the allocation, so the overlapping step does not request them a second time.
+# The container flags mirror the slime GRPO training step: writable rootfs for
+# runtime scratch, no host-home mount (caches are redirected to /lustre by the
+# runner), and the repo as the working directory.
 exec "${SRUN_BIN}" \
     --overlap \
     --nodes=4 \
@@ -54,4 +73,9 @@ exec "${SRUN_BIN}" \
     --cpus-per-task="${LLAMAFACTORY_STEP_CPUS_PER_TASK:-56}" \
     --cpu-bind=none \
     --kill-on-bad-exit=1 \
+    --container-image="${TRAIN_SQSH}" \
+    --container-mounts="${TRAIN_MOUNTS}" \
+    --container-workdir="${REPO_ROOT}" \
+    --container-writable \
+    --no-container-mount-home \
     bash "${RUNNER}" "$@"

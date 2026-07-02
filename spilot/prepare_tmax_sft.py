@@ -21,8 +21,8 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 
-CONVERTER_VERSION = "tmax-openai-to-sharegpt-v2"
-DATASET_NAME = "spilot_skill_tax_sft"
+CONVERTER_VERSION = "tmax-openai-to-sharegpt-v3"
+DATASET_NAME = "spilot_skill_tmax_sft_only_success"
 PROMPT_ROLES = {"human", "observation"}
 TARGET_ROLES = {"gpt", "function_call"}
 OUTPUT_SCHEMA = pa.schema(
@@ -96,12 +96,12 @@ def _assistant_value(message: dict[str, Any], tool_calls: list[dict[str, Any]]) 
             value += "\n"
         call_json = json.dumps(tool_calls, ensure_ascii=False, separators=(",", ":"))
         # FunctionFormatter recognizes this wrapper, preserves text/thinking before
-        # it, and emits Qwen3.5's canonical tool-call syntax.
+        # it, and emits the target Qwen template's canonical tool-call syntax.
         value += f"<tool_call>{call_json}</tool_call>"
     return value
 
 
-def _convert_messages(messages: Any, row_index: int) -> tuple[list[dict[str, str]], dict[str, int]]:
+def _convert_messages(messages: Any, row_index: int) -> tuple[list[dict[str, str]] | None, dict[str, int]]:
     if not isinstance(messages, list) or not messages:
         raise ValueError(f"row {row_index}: messages must be a non-empty list")
 
@@ -163,6 +163,12 @@ def _convert_messages(messages: Any, row_index: int) -> tuple[list[dict[str, str
         allowed = PROMPT_ROLES if turn_index % 2 == 0 else TARGET_ROLES
         if message["from"] not in allowed:
             raise ValueError(f"row {row_index}: role {message['from']!r} is invalid at converted index {turn_index}")
+        # Drop trajectories that contain an empty assistant-target turn (e.g. a
+        # "format error" recovery step). Training on an empty response is harmful,
+        # and the empty turn cannot be removed in isolation without breaking the
+        # human/assistant alternation, so the whole row is skipped.
+        if turn_index % 2 == 1 and not message["value"].strip():
+            return None, stats
     return conversations, stats
 
 
@@ -242,6 +248,7 @@ def prepare(input_path: Path, output_dir: Path, force: bool = False) -> Path:
             "reasoning_turns": 0,
             "tool_call_turns": 0,
             "trimmed_tail_messages": 0,
+            "skipped_empty_target": 0,
         }
         writer: pq.ParquetWriter | None = None
         try:
@@ -249,8 +256,11 @@ def prepare(input_path: Path, output_dir: Path, force: bool = False) -> Path:
             for batch in parquet_file.iter_batches(batch_size=256, columns=["messages", "tools"]):
                 converted_rows = []
                 for row in batch.to_pylist():
-                    row_index = totals["rows"]
+                    row_index = totals["rows"] + totals["skipped_empty_target"]
                     conversations, row_stats = _convert_messages(row["messages"], row_index)
+                    if conversations is None:
+                        totals["skipped_empty_target"] += 1
+                        continue
                     converted_rows.append(
                         {"conversations": conversations, "tools": _normalize_tools(row.get("tools"))}
                     )
@@ -258,7 +268,8 @@ def prepare(input_path: Path, output_dir: Path, force: bool = False) -> Path:
                     totals["messages"] += len(conversations)
                     for key, value in row_stats.items():
                         totals[key] += value
-                writer.write_table(pa.Table.from_pylist(converted_rows, schema=OUTPUT_SCHEMA))
+                if converted_rows:
+                    writer.write_table(pa.Table.from_pylist(converted_rows, schema=OUTPUT_SCHEMA))
             writer.close()
             writer = None
             os.replace(temporary, output_path)
@@ -272,7 +283,8 @@ def prepare(input_path: Path, output_dir: Path, force: bool = False) -> Path:
         _write_json_atomic(metadata_path, metadata)
         print(
             "Prepared {rows} rows ({reasoning_turns} reasoning turns, "
-            "{tool_call_turns} tool-call turns, {trimmed_tail_messages} trailing messages trimmed): {output}".format(
+            "{tool_call_turns} tool-call turns, {trimmed_tail_messages} trailing messages trimmed, "
+            "{skipped_empty_target} rows skipped for empty assistant target): {output}".format(
                 **metadata
             ),
             flush=True,

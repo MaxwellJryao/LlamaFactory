@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Full-parameter SFT for Qwen/Qwen3.5-9B on exactly 4 nodes x 8 H100s.
+# Full-parameter SFT for Qwen/Qwen3-8B on exactly 4 nodes x 8 H100s.
 #
 # Launch exactly ONE copy of this script per node; each copy starts eight local
 # torch workers. Example from a Slurm login/submit environment:
@@ -8,7 +8,7 @@
 #   srun --nodes=4 --ntasks=4 --ntasks-per-node=1 --gpus-per-task=8 \
 #     --gpu-bind=none --cpu-bind=none --kill-on-bad-exit=1 \
 #     --export=ALL,MASTER_ADDR \
-#     bash /lustre/fsw/portfolios/nvr/projects/nvr_lpr_llm/users/jiaruiy/spilot/src/LlamaFactory/spilot/run_qwen3_5_9b_full_sft_4n8g.sh
+#     bash /lustre/fsw/portfolios/nvr/projects/nvr_lpr_llm/users/jiaruiy/spilot/src/LlamaFactory/spilot/run_qwen3_8b_full_sft_4n8g.sh
 #
 # Without Slurm, run it once on every node with the same MASTER_ADDR and
 # MASTER_PORT and with NODE_RANK set to 0, 1, 2, and 3 respectively.
@@ -19,14 +19,14 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." &>/dev/null && pwd)"
 SPILOT_ROOT="$(cd -- "${REPO_ROOT}/../.." &>/dev/null && pwd)"
 
-TRAIN_CONFIG="${TRAIN_CONFIG:-${SCRIPT_DIR}/qwen3_5_9b_full_sft_4n8g.yaml}"
+TRAIN_CONFIG="${TRAIN_CONFIG:-${SCRIPT_DIR}/qwen3_8b_full_sft_4n8g.yaml}"
 DEEPSPEED_CONFIG="${DEEPSPEED_CONFIG:-${REPO_ROOT}/examples/deepspeed/ds_z3_config.json}"
 DATA_FILE="${DATA_FILE:-${SPILOT_ROOT}/data/tmax-sft/skill_tax_20260505_2.2k_combined_balanced_thinking_only_success/train-00000-of-00001.parquet}"
-PREPARED_DATA_DIR="${PREPARED_DATA_DIR:-${SPILOT_ROOT}/data/llamafactory_cache/skill_tax_20260505_thinking_success}"
-OUTPUT_DIR="${OUTPUT_DIR:-${SPILOT_ROOT}/data/checkpoints/Qwen3.5-9B-sft-skill-tax-thinking-success}"
+PREPARED_DATA_DIR="${PREPARED_DATA_DIR:-${SPILOT_ROOT}/data/llamafactory_cache/tmax_20260505_thinking_success}"
+OUTPUT_DIR="${OUTPUT_DIR:-${SPILOT_ROOT}/data/checkpoints/qwen3-8b/sft-spilot-tmax-sft-only-success}"
 
-MODEL_ID="Qwen/Qwen3.5-9B"
-LOCAL_MODEL="${SPILOT_ROOT}/data/checkpoints/Qwen3.5-9B"
+MODEL_ID="Qwen/Qwen3-8B"
+LOCAL_MODEL="${SPILOT_ROOT}/data/checkpoints/Qwen3-8B"
 if [[ -z "${MODEL_NAME_OR_PATH:-}" ]]; then
     if [[ -f "${LOCAL_MODEL}/config.json" && -f "${LOCAL_MODEL}/model.safetensors.index.json" ]]; then
         MODEL_NAME_OR_PATH="${LOCAL_MODEL}"
@@ -49,13 +49,13 @@ usage() {
 Usage: launch one copy per node (4 nodes total), or run PREPARE_ONLY=1 locally.
 
 Required for a manual multi-node launch:
-  MASTER_ADDR=<rank-0 host or IP> NODE_RANK=<0..3> bash run_qwen3_5_9b_full_sft_4n8g.sh
+  MASTER_ADDR=<rank-0 host or IP> NODE_RANK=<0..3> bash run_qwen3_8b_full_sft_4n8g.sh
 
 Useful overrides:
   OUTPUT_DIR=...                 checkpoint/output directory (auto-resumes)
-  MODEL_NAME_OR_PATH=...         defaults to the shared local Qwen3.5-9B mirror
+  MODEL_NAME_OR_PATH=...         defaults to the shared local Qwen3-8B mirror
   CUTOFF_LEN=32768               98.57% of samples fit without truncation
-  ATTN_IMPL=sdpa|fa2             fa2 requires flash-attn and fla>=0.4.1
+  ATTN_IMPL=sdpa|fa2             fa2 requires flash-attn
   NUM_TRAIN_EPOCHS=3             training epochs
   GRADIENT_ACCUMULATION_STEPS=4  global batch = 32 * this value
   REPORT_TO=none|wandb           Trainer reporting backend
@@ -166,12 +166,10 @@ import os
 import transformers
 
 import deepspeed  # noqa: F401
-from transformers.models.qwen3_5 import modeling_qwen3_5  # noqa: F401
+from transformers.models.qwen3 import modeling_qwen3  # noqa: F401
 
 if os.environ["ATTN_IMPL"] == "fa2":
     import flash_attn  # noqa: F401
-    from fla.modules.convolution import causal_conv1d  # noqa: F401
-    from fla.ops.gated_delta_rule import chunk_gated_delta_rule  # noqa: F401
 
 print(f"Dependency check passed (transformers={transformers.__version__}, attention={os.environ['ATTN_IMPL']}).")
 PY
@@ -196,7 +194,7 @@ fi
 CUTOFF_LEN="${CUTOFF_LEN:-32768}"
 NUM_TRAIN_EPOCHS="${NUM_TRAIN_EPOCHS:-3.0}"
 GRADIENT_ACCUMULATION_STEPS="${GRADIENT_ACCUMULATION_STEPS:-4}"
-RUN_NAME="${RUN_NAME:-qwen35-9b-sft-skill-tax-${JOB_KEY}}"
+RUN_NAME="${RUN_NAME:-qwen3-8b-sft-skill-tax-${JOB_KEY}}"
 REPORT_TO="${REPORT_TO:-none}"
 
 train_overrides=(

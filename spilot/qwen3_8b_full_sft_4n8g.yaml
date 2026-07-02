@@ -1,5 +1,5 @@
 ### model
-model_name_or_path: Qwen/Qwen3.5-9B
+model_name_or_path: Qwen/Qwen3-8B
 trust_remote_code: true
 flash_attn: sdpa
 use_reentrant_gc: false
@@ -8,17 +8,14 @@ use_reentrant_gc: false
 stage: sft
 do_train: true
 finetuning_type: full
-freeze_vision_tower: true
-freeze_multi_modal_projector: true
-freeze_language_model: false
 deepspeed: examples/deepspeed/ds_z3_config.json
 
 ### dataset
-# The launcher overrides dataset_dir with the cache produced by
-# prepare_tmax_sft.py.
-dataset: spilot_skill_tax_sft
-dataset_dir: data
-template: qwen3_5
+# dataset_info.json lives in the cache directory produced by
+# prepare_tmax_sft.py; the launcher overrides dataset_dir with the same path.
+dataset: spilot_skill_tmax_sft_only_success
+dataset_dir: /lustre/fsw/portfolios/nvr/projects/nvr_lpr_llm/users/jiaruiy/spilot/data/llamafactory_cache/tmax_20260505_thinking_success
+template: qwen3
 enable_thinking: true
 preserve_thinking: true
 cutoff_len: 32768
@@ -31,10 +28,10 @@ preprocessing_num_workers: 16
 dataloader_num_workers: 4
 
 ### output
-output_dir: saves/qwen3.5-9b/full/sft-spilot-skill-tax
+output_dir: checkpoints/qwen3-8b/sft-spilot-tmax-sft-only-success
 logging_steps: 1
-save_steps: 50
-save_total_limit: 2
+save_steps: 20
+save_strategy: epoch
 plot_loss: true
 overwrite_output_dir: false
 save_only_model: false
