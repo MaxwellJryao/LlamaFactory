@@ -1,0 +1,55 @@
+### model
+model_name_or_path: Qwen/Qwen3-4B
+trust_remote_code: true
+flash_attn: sdpa
+use_reentrant_gc: false
+
+### method
+stage: sft
+do_train: true
+finetuning_type: full
+deepspeed: examples/deepspeed/ds_z3_config.json
+
+### dataset
+# dataset_info.json lives in the cache directory produced by
+# prepare_tmax_sft.py; the launcher overrides dataset_dir with the same path.
+dataset: spilot_skill_tmax_sft_only_success
+dataset_dir: /lustre/fsw/portfolios/nvr/projects/nvr_lpr_llm/users/jiaruiy/spilot/data/llamafactory_cache/tmax_20260505_thinking_success
+template: qwen3
+enable_thinking: true
+preserve_thinking: true
+cutoff_len: 32768
+train_on_prompt: false
+mask_history: false
+packing: false
+neat_packing: false
+data_shared_file_system: true
+preprocessing_num_workers: 16
+dataloader_num_workers: 4
+
+### output
+output_dir: checkpoints/qwen3-4b/sft-spilot-tmax-sft-only-success
+logging_steps: 1
+save_steps: 20
+save_strategy: epoch
+plot_loss: true
+overwrite_output_dir: false
+save_only_model: false
+report_to: none
+
+### train
+per_device_train_batch_size: 1
+gradient_accumulation_steps: 4
+gradient_checkpointing: true
+learning_rate: 1.0e-5
+num_train_epochs: 3.0
+lr_scheduler_type: cosine
+warmup_steps: 14
+weight_decay: 0.1
+optim: adamw_torch_fused
+max_grad_norm: 1.0
+bf16: true
+tf32: true
+ddp_timeout: 180000000
+seed: 42
+resume_from_checkpoint: null
